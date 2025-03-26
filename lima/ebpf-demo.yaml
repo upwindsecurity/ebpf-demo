@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Ubuntu eBFP/Go development environment
 arch: "default"
 
@@ -13,8 +15,6 @@ memory: "4GiB"
 mounts:
 - location: "~"
   writable: true
-- location: "/tmp/lima"
-  writable: true
 
 containerd:
   system: false
@@ -29,8 +29,8 @@ provision:
     export KERNEL_VERSION=`uname -r`
     apt-get update -q
     apt-get install -q -y apt-transport-https ca-certificates
-    apt-get install -q -y linux-tools-common linux-tools-generic linux-tools-${KERNEL_VERSION}
     apt-get install -q -y curl jq git
+    apt-get install -q -y linux-tools-common linux-tools-generic linux-tools-${KERNEL_VERSION}
     apt-get install -q -y build-essential llvm clang
     apt-get install -q -y libbpf-dev libelf-dev libpcap-dev
 
@@ -46,13 +46,12 @@ provision:
 - mode: system
   script: |
     #!/bin/sh
-    export GO_VERSION="1.21.5"
+    export GO_VERSION="1.24.1"
     export ARCH=`dpkg --print-architecture`
     export OS=`uname -s | tr '[:upper:]' '[:lower:]'`
     PATH="$PATH:/usr/local/go/bin"
     curl -sL https://go.dev/dl/go${GO_VERSION}.${OS}-${ARCH}.tar.gz | tar -v -C /usr/local -xz
     ln -s /usr/local/go/bin/go /usr/local/bin/
-    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.55.2
 - mode: user
   script: |
     #!/bin/sh
@@ -77,7 +76,7 @@ provision:
       # Alternatively we could just add the user to the "docker" group, but that requires restarting the user session
       cat <<-EOF >/etc/systemd/system/docker.socket.d/override.conf
       [Socket]
-      SocketUser=${LIMA_CIDATA_USER}
+      SocketUser={{.User}}
     EOF
     fi
     export DEBIAN_FRONTEND=noninteractive
