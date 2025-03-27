@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 #https://clarkgrubb.com/makefile-style-guide
 MAKEFLAGS += --warn-undefined-variables
 SHELL := bash
@@ -26,15 +27,16 @@ git_tag          = $(shell git describe --tags --always --dirty)
 git_version_tag  = $(shell git tag --points-at HEAD | grep -P '^v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)[0-9]+)?$$' || git rev-parse --abbrev-ref HEAD)
 
 # Tools
+GO ?= $(shell which go || false)
 BPFTOOL ?= $(shell which bpftool || false)
-GOLANGCI_LINT ?= $(shell which golangci-lint || false)
+GOLANGCI_LINT ?= $(GO) tool golangci-lint
 
 # BPF
 BPF_CFLAGS ?= "-g -O3 -fpie -Wall -Wextra -Wconversion"
 bpf_src := $(shell find bpf -name "*.bpf.c")
 
 # LIBBPF Headers
-LIBBPF_VERSION = 1.3.0
+LIBBPF_VERSION = 1.4.7
 libbpf_dir = bpf/libbpf
 libbpf_headers := $(libbpf_dir)/LICENSE.BSD-2-Clause
 libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf_core_read.h $(libbpf_dir)/bpf_endian.h
@@ -57,7 +59,7 @@ go_ldflags := -ldflags "-s -w"
 # Go generate files
 generator_path = internal/ebpf
 generator_files = $(foreach arch, $(ARCH), $(generator_path)/generate_$(arch).go)
-generated_files = $(foreach ext, o go, $(generator_path)/bpf_bpfel_$(subst amd64,x86,$(ARCH)).$(ext))
+generated_files = $(foreach ext, o go, $(generator_path)/bpf_$(subst amd64,x86,$(ARCH))_bpfel.$(ext))
 
 .PHONY: all
 all: vmlinux libbpf generate build
@@ -71,10 +73,7 @@ fmt:
 
 .PHONY: lint
 lint: generate
-ifeq (, $(GOLANGCI_LINT))
-	$(error "No golangci-lint in $$PATH. https://golangci-lint.run/usage/install/#local-installation")
-endif
-	-$(GOLANGCI_LINT) run --enable gofmt --skip-dirs-use-default ./...
+	-$(GOLANGCI_LINT) run  ./...
 
 .PHONY: test
 test:
@@ -101,7 +100,7 @@ vmlinux: $(vmlinux)
 
 $(vmlinux):
 ifeq ($(OS),Darwin)
-	$(error "Can not build on MacOs. Run on Linux")
+	$(error "Can not build on MacOs. Run on Linux\nFor example, use Docker or Lima VM")
 endif
 ifeq (, $(BPFTOOL))
 	$(error "No bpftool in $$PATH, make sure it is installed.")
@@ -123,6 +122,7 @@ clean-all:
 	-rm -rf $(vmlinux)
 	-rm -rf $(libbpf_headers)
 
+
 ## Docker targets
 .PHONY: docker-build docker-run docker-stop docker-logs
 docker-build:
@@ -138,12 +138,26 @@ docker-logs:
 	@-docker logs $(TARGET)
 
 
-## Lima targets
-lima_name := ebpf-demo
-lima_env := LIMA_INSTANCE=$(lima_name)
-.PHONY: lima-start lima-shell lima-generate lima-build lima-stop lima-remove
-lima-start:
-	@limactl start --tty=false ./lima/$(lima_name).yaml
+## Lima VM targets
+VM_NAME ?= ebpf-demo
+lima_env := LIMA_INSTANCE=$(VM_NAME)
+.PHONY: lima-start lima-stop lima-shell lima-generate lima-build lima-remove
+lima-start: lima/ebpf-demo.yaml
+	@if [ -z "$$(limactl list | grep $(VM_NAME))" ]; then \
+			limactl start --name=$(VM_NAME) --tty=false ./lima/ebpf-demo.yaml; \
+	else \
+		if [ -z "$$(limactl list | grep Running)" ]; then \
+			limactl start $(VM_NAME); \
+		else \
+			echo "VM $(VM_NAME) already running"; \
+		fi; \
+	fi
+
+lima-stop:
+	@limactl stop $(VM_NAME)
+
+lima-remove: lima-stop
+	@limactl remove $(lima_name) -f
 
 lima-shell: lima-start
 	@$(lima_env) lima
@@ -151,11 +165,8 @@ lima-shell: lima-start
 lima-generate: lima-start
 	@$(lima_env) lima make generate
 
+lima-vmlinuxh: lima-start
+	@$(lima_env) lima make vmlinux
+
 lima-build: lima-start
 	@$(lima_env) lima make
-
-lima-stop:
-	@limactl stop $(lima_name) -f
-
-lima-remove: lima-stop
-	@limactl remove $(lima_name) -f

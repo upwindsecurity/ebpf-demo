@@ -53,9 +53,10 @@ func loadBpfObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 type bpfSpecs struct {
 	bpfProgramSpecs
 	bpfMapSpecs
+	bpfVariableSpecs
 }
 
-// bpfSpecs contains programs before they are loaded into the kernel.
+// bpfProgramSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
@@ -69,12 +70,20 @@ type bpfMapSpecs struct {
 	Events *ebpf.MapSpec `ebpf:"events"`
 }
 
+// bpfVariableSpecs contains global variables before they are loaded into the kernel.
+//
+// It can be passed ebpf.CollectionSpec.Assign.
+type bpfVariableSpecs struct {
+	Edt *ebpf.VariableSpec `ebpf:"_edt"`
+}
+
 // bpfObjects contains all objects after they have been loaded into the kernel.
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfObjects struct {
 	bpfPrograms
 	bpfMaps
+	bpfVariables
 }
 
 func (o *bpfObjects) Close() error {
@@ -95,6 +104,13 @@ func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
 	)
+}
+
+// bpfVariables contains all global variables after they have been loaded into the kernel.
+//
+// It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
+type bpfVariables struct {
+	Edt *ebpf.Variable `ebpf:"_edt"`
 }
 
 // bpfPrograms contains all programs after they have been loaded into the kernel.
@@ -121,5 +137,5 @@ func _BpfClose(closers ...io.Closer) error {
 
 // Do not access this directly.
 //
-//go:embed bpf_bpfel_arm64.o
+//go:embed bpf_arm64_bpfel.o
 var _BpfBytes []byte

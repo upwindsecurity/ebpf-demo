@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
 package ebpf
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -17,29 +19,35 @@ type Execve struct {
 	reader  *perf.Reader
 }
 
-func (e *Execve) Read() error {
+func (e *Execve) Read(ctx context.Context) error {
 	for {
-		ev, err := e.reader.Read()
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
 
-		if err != nil {
-			return fmt.Errorf("execve: read error: %w", err)
+			ev, err := e.reader.Read()
+
+			if err != nil {
+				return fmt.Errorf("execve: read error: %w", err)
+			}
+
+			if ev.LostSamples != 0 {
+				log.Printf("execve: perf event ring buffer full, dropped %d samples", ev.LostSamples)
+				continue
+			}
+
+			b_arr := bytes.NewBuffer(ev.RawSample)
+
+			var data bpfExecDataT
+			if err := binary.Read(b_arr, binary.LittleEndian, &data); err != nil {
+				log.Printf("parsing perf event: %s", err)
+				continue
+			}
+
+			log.Printf("On CPU %02d %s ran: %s (PID: %d)\n",
+				ev.CPU, data.Comm, data.Fname, data.Pid)
 		}
-
-		if ev.LostSamples != 0 {
-			log.Printf("execve: perf event ring buffer full, dropped %d samples", ev.LostSamples)
-			continue
-		}
-
-		b_arr := bytes.NewBuffer(ev.RawSample)
-
-		var data bpfExecDataT
-		if err := binary.Read(b_arr, binary.LittleEndian, &data); err != nil {
-			log.Printf("parsing perf event: %s", err)
-			continue
-		}
-
-		log.Printf("On CPU %02d %s ran: %s (PID: %d)\n",
-			ev.CPU, data.Comm, data.Fname, data.Pid)
 	}
 }
 
