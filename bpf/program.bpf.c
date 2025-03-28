@@ -1,62 +1,77 @@
 #include "vmlinux.h"
 #include "bpf_helpers.h"
+#include "bpf_core_read.h"
 
-#define FNAME_LEN 32
+// Include common definitiona and helpers
+#include "common.bpf.h"
 
-#define FIRST_32_BITS(x) x >> 32
-#define LAST_32_BITS(x) x & 0xFFFFFFFF
-
-struct exec_data_t {
-	u32 pid;
-	u8 fname[FNAME_LEN];
-	u8 comm[FNAME_LEN];
-};
-
-// For Rust libbpf-rs only
-struct exec_data_t _edt = {0};
-
+// Create a ringbuffer map to store events
+// Ringbuffers are a type of BPF map that can be used to store events
+// that can be read by user-space programs
 struct {
-	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(u32));
-	__uint(max_entries, 256);
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 256 * 1024); // 256 KB
 } events SEC(".maps");
 
-struct execve_entry_args_t {
-	u64 _unused;
-	u64 _unused2;
+// Data structure to store events
+// This structure will be used to store data about process exec events
+struct process_exec_event {
+	u32 pid;
+	u8 comm[TASK_COMM_LEN];
+	u8 filename[MAX_FILENAME_LEN];
+	int filname_len;
+} __attribute__((packed));
 
-	const char* filename;
-	const char* const* argv;
-	const char* const* envp;
+struct sched_process_exec_args {
+	struct common_tracepoint_entry_args_t common;
+
+	__u32 __data_loc_filename;
+	__s8 pid;
+	__s8 old_pid;
 };
 
-SEC("tracepoint/syscalls/sys_enter_execve")
-int enter_execve(struct execve_entry_args_t *args)
+SEC("tracepoint/sched/sched_process_exec")
+int sched_process_exec(struct sched_process_exec_args *ctx)
 {
-	struct exec_data_t exec_data = {};
-	u64 pid_tgid;
-
+	struct process_exec_event *e;
 	char unknown[8] = "unknown";
 
-	pid_tgid = bpf_get_current_pid_tgid();
-	exec_data.pid = LAST_32_BITS(pid_tgid);
-
-	bpf_get_current_comm(exec_data.comm, sizeof(exec_data.comm));
-
-	long ret =
-	bpf_probe_read_user_str(exec_data.fname,
-		sizeof(exec_data.fname), args->filename);
-
-	if (ret < 0) {
-		bpf_probe_read_kernel_str(exec_data.fname,
-			sizeof(exec_data.fname), unknown);
+	// Reserve space in the ringbuffer for the event data
+	e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+	if (!e) {
+		return 0;
 	}
 
-	bpf_printk("execve filename: %s\n", exec_data.fname);
+	e->pid = LAST_32_BITS(bpf_get_current_pid_tgid());
 
-	bpf_perf_event_output(args, &events,
-		BPF_F_CURRENT_CPU, &exec_data, sizeof(exec_data));
+	bpf_get_current_comm(e->comm, sizeof(e->comm));
+
+	// The __data_loc_filename field encodes the offset (lower 16 bits)
+    	// where the filename string is stored, relative to the context pointer.
+    	unsigned int offset = ctx->__data_loc_filename & 0xFFFF;
+
+	// Read the filename from the computed address.
+    	// Note: bpf_core_read_str() will read up to sizeof(e->filename) bytes.
+	long ret =
+	bpf_core_read_str(e->filename, sizeof(e->filename), (void *)ctx + offset);
+
+	// If the read fails, copy the string "unknown" to the filename field
+	if (ret < 0) {
+		bpf_probe_read_kernel_str(e->filename, sizeof(e->filename), unknown);
+		ret = sizeof(unknown);
+	}
+
+	// Store the length of the filename
+	e->filname_len = (int)ret;
+
+	// bpf_printk is a helper function that prints a message to the kernel log
+	// This can be useful for debugging, but should be used sparingly
+	// The message will be visible in the kernel trace pipe 
+	// (e.g. /sys/kernel/debug/tracing/trace_pipe)
+	bpf_printk("sched_process_exec filename: %s\n", e->filename);
+
+	// Submit the event to the ringbuffer
+	bpf_ringbuf_submit(e, 0);
 
 	return 0;
 }

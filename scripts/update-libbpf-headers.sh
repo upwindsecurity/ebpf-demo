@@ -60,6 +60,8 @@ curl -sL "https://github.com/libbpf/libbpf/archive/refs/tags/v${LIBBPF_VERSION}.
     tar -xz -C "${OUTPUTDIR}" --xform='s#.*/##' "${headers[@]}"
 
 # Update includes to use local paths
+sed -i -e '/<bpf\/bpf_helpers.h>/i #include "vmlinux.h"' "${OUTPUTDIR}/bpf_core_read.h"
+sed -i -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_core_read.h"
 sed -i -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_tracing.h"
 
 # Touch version file
