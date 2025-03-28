@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/cilium/ebpf/rlimit"
+
 	"github.com/upwindsecurity/ebpf-demo/internal/ebpf"
 )
 
@@ -21,12 +22,12 @@ func main() {
 	// Allow the current process to lock memory for eBPF resources.
 	must(rlimit.RemoveMemlock(), "memlock error")
 
-	execve := &ebpf.Execve{}
-	must(execve.Start(), "execve start")
+	processExec := new(ebpf.ProcessExecTracePoint)
+	must(processExec.Start(), "processExec start")
 	defer func() {
-		err := execve.Close()
+		err := processExec.Close()
 		if err != nil {
-			fmt.Println("Error closing execve: ", err)
+			fmt.Println("Error closing processExec: ", err)
 		}
 	}()
 
@@ -38,7 +39,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		must(execve.Read(ctx), "execve read")
+		must(processExec.Read(ctx), "processExec read")
 	}()
 
 	// Wait for a signal to stop the program.

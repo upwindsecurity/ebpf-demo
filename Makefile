@@ -48,7 +48,11 @@ vmlinux_dir := bpf/vmlinux
 vmlinux := $(vmlinux_dir)/vmlinux_$(ARCH).h
 
 # Go files
+go_os ?= linux
+go_arch ?= $(shell go env GOARCH)
 go_env = CGO_ENABLED=0
+go_env += GOOS=$(go_os)
+go_env += GOARCH=$(go_arch)
 go_src = $(shell find . -name "*.go")
 go_module  = $(shell go list -m)
 go_modules = $(shell go list ./...)
@@ -58,8 +62,8 @@ go_ldflags := -ldflags "-s -w"
 
 # Go generate files
 generator_path = internal/ebpf
-generator_files = $(foreach arch, $(ARCH), $(generator_path)/generate_$(arch).go)
-generated_files = $(foreach ext, o go, $(generator_path)/bpf_$(subst amd64,x86,$(ARCH))_bpfel.$(ext))
+generator_files = $(foreach arch, amd64 arm64, $(generator_path)/generate_$(arch).go)
+generated_files = $(foreach ext, o go, $(foreach arch, amd64 arm64, $(generator_path)/bpf_$(subst amd64,x86,$(arch))_bpfel.$(ext)))
 
 .PHONY: all
 all: vmlinux libbpf generate build
@@ -83,7 +87,8 @@ test:
 generate: $(generated_files)
 
 $(generated_files): $(generator_files) $(libbpf_headers) $(vmlinux) $(bpf_src)
-	@BPF_CFLAGS=$(BPF_CFLAGS) go generate ./...
+	@BPF_CFLAGS=$(BPF_CFLAGS) GOARCH=amd64 go generate ./...
+	@BPF_CFLAGS=$(BPF_CFLAGS) GOARCH=arm64 go generate ./...
 
 .PHONY:
 update-libbpf-headers:
