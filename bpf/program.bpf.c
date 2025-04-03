@@ -2,7 +2,7 @@
 #include "bpf_helpers.h"
 #include "bpf_core_read.h"
 
-// Include common definitiona and helpers
+// Include common definitions and helpers
 #include "common.bpf.h"
 
 // Create a ringbuffer map to store events
@@ -19,7 +19,7 @@ struct process_exec_event {
 	u32 pid;
 	u8 comm[TASK_COMM_LEN];
 	u8 filename[MAX_FILENAME_LEN];
-	int filname_len;
+	int filename_len;
 } __attribute__((packed));
 
 struct sched_process_exec_args {
@@ -61,8 +61,8 @@ int sched_process_exec(struct sched_process_exec_args *ctx)
 		ret = sizeof(unknown);
 	}
 
-	// Store the length of the filename
-	e->filname_len = (int)ret;
+	// Store the length of the filename (including null terminator)
+	e->filename_len = (int)ret;
 
 	// bpf_printk is a helper function that prints a message to the kernel log
 	// This can be useful for debugging, but should be used sparingly
