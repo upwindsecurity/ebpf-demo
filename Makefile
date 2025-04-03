@@ -29,6 +29,8 @@ git_version_tag  = $(shell git tag --points-at HEAD | grep -P '^v[0-9]+\.[0-9]+\
 # Tools
 GO ?= $(shell which go || false)
 BPFTOOL ?= $(shell which bpftool || false)
+DOCKER ?= $(shell which docker || false)
+LIMA ?= $(shell which limactl || false)
 GOLANGCI_LINT ?= $(GO) tool golangci-lint
 
 # BPF
@@ -57,41 +59,51 @@ go_src = $(shell find . -name "*.go")
 go_module  = $(shell go list -m)
 go_modules = $(shell go list ./...)
 
-# Go build flags
+# Go build flags (-s: strip symbol table, -w: strip debug info)
 go_ldflags := -ldflags "-s -w"
 
 # Go generate files
-generator_path = internal/ebpf
-generator_files = $(foreach arch, amd64 arm64, $(generator_path)/generate_$(arch).go)
-generated_files = $(foreach ext, o go, $(foreach arch, amd64 arm64, $(generator_path)/bpf_$(subst amd64,x86,$(arch))_bpfel.$(ext)))
+# generator_path: Path to eBPF code generator
+# generator_files: Architecture-specific generator source files
+# generated_files: Output files (object and Go files) for each architecture
+generator_path := internal/ebpf
+generator_files := $(foreach arch, amd64 arm64, $(generator_path)/generate_$(arch).go)
+generated_files := $(foreach ext, o go, $(foreach arch, amd64 arm64, $(generator_path)/bpf_$(subst amd64,x86,$(arch))_bpfel.$(ext)))
+
+.PHONY: help
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: all
-all: vmlinux libbpf generate build
+all: prereq vmlinux libbpf generate build ## Build everything
 
 .PHONY: build
-build: $(TARGET)
+build: $(TARGET) ## Build the main target
 
 .PHONY: fmt
-fmt:
+fmt: ## Format Go code
 	@go fmt ./...
 
 .PHONY: lint
-lint: generate
+lint: generate ## Run linter
 	-$(GOLANGCI_LINT) run  ./...
 
 .PHONY: test
-test:
+test: ## Run tests
 	go test $(go_modules)
 
 .PHONY: generate
-generate: $(generated_files)
+generate: $(generated_files) ## Generate Go eBPF code
 
 $(generated_files): $(generator_files) $(libbpf_headers) $(vmlinux) $(bpf_src)
 	@BPF_CFLAGS=$(BPF_CFLAGS) GOARCH=amd64 go generate ./...
 	@BPF_CFLAGS=$(BPF_CFLAGS) GOARCH=arm64 go generate ./...
 
-.PHONY:
-update-libbpf-headers:
+.PHONY: update-libbpf-headers
+update-libbpf-headers: ## Update libbpf headers
 	@LIBBPF_VERSION=$(LIBBPF_VERSION) scripts/update-libbpf-headers.sh
 
 .PHONY: libbpf
@@ -101,7 +113,7 @@ $(libbpf_headers):
 	@LIBBPF_VERSION=$(LIBBPF_VERSION) scripts/update-libbpf-headers.sh
 
 .PHONY: vmlinux
-vmlinux: $(vmlinux)
+vmlinux: $(vmlinux) ## Generate vmlinux header files
 
 $(vmlinux):
 ifeq ($(OS),Darwin)
@@ -116,12 +128,12 @@ $(TARGET): $(go_src) $(generated_files)
 	$(go_env) go build $(go_ldflags) -o $(TARGET) .
 
 .PHONY: clean
-clean:
+clean: ## Clean workspace
 	rm -f $(TARGET)
-	rm -f $(generated_files)
+	rm -f internal/ebpf/bpf_*.o
 
 .PHONY: clean-all
-clean-all:
+clean-all: ## Clean all
 	-rm -rf $(TARGET)
 	-rm -rf $(generated_files)
 	-rm -rf $(vmlinux)
@@ -129,25 +141,38 @@ clean-all:
 
 
 ## Docker targets
+.PHONY: docker-prereq docker-build docker-run docker-stop docker-logs
+docker-prereq:
+ifeq (, $(DOCKER))
+	$(error "Docker not found in $$PATH")
+endif
+
 .PHONY: docker-build docker-run docker-stop docker-logs
-docker-build:
+docker-build: docker-prereq
 	@docker buildx build . -t $(TARGET)
 
-docker-run:
+docker-run: docker-prereq
 	@-docker run --rm -d --privileged -v /sys/kernel/debug:/sys/kernel/debug --name $(TARGET) $(TARGET)
 
-docker-stop:
+docker-stop: docker-prereq
 	@-docker stop $(TARGET)
 
-docker-logs:
+docker-logs: docker-prereq
 	@-docker logs $(TARGET)
 
 
 ## Lima VM targets
+.PHONY: lima-prereq
+lima-prereq:
+ifeq (, $(LIMA))
+	$(error "limactl not found in $$PATH")
+endif
+
 VM_NAME ?= ebpf-demo
 lima_env := LIMA_INSTANCE=$(VM_NAME)
+
 .PHONY: lima-start lima-stop lima-shell lima-generate lima-build lima-remove
-lima-start: lima/ebpf-demo.yaml
+lima-start: lima-prereq lima/ebpf-demo.yaml
 	@if [ -z "$$(limactl list | grep $(VM_NAME))" ]; then \
 			limactl start --name=$(VM_NAME) --tty=false ./lima/ebpf-demo.yaml; \
 	else \
@@ -158,20 +183,20 @@ lima-start: lima/ebpf-demo.yaml
 		fi; \
 	fi
 
-lima-stop:
+lima-stop: lima-prereq
 	@limactl stop $(VM_NAME)
 
-lima-remove: lima-stop
-	@limactl remove $(lima_name) -f
+lima-remove: lima-prereq lima-stop
+	@limactl remove $(VM_NAME) -f
 
-lima-shell: lima-start
+lima-shell: lima-prereq lima-start
 	@$(lima_env) lima
 
-lima-generate: lima-start
+lima-generate: lima-prereq lima-start
 	@$(lima_env) lima make generate
 
-lima-vmlinuxh: lima-start
+lima-vmlinuxh: lima-prereq lima-start
 	@$(lima_env) lima make vmlinux
 
-lima-build: lima-start
+lima-build: lima-prereq lima-start
 	@$(lima_env) lima make

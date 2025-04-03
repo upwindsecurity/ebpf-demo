@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
-# Ubuntu eBFP/Go development environment
+# Ubuntu eBPF/Go development environment
 arch: "default"
+vmType: "qemu"
 
 images:
 - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img"
@@ -28,11 +29,11 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     export KERNEL_VERSION=`uname -r`
     apt-get update -q
-    apt-get install -q -y apt-transport-https ca-certificates
-    apt-get install -q -y curl jq git
-    apt-get install -q -y linux-tools-common linux-tools-generic linux-tools-${KERNEL_VERSION}
-    apt-get install -q -y build-essential llvm clang
-    apt-get install -q -y libbpf-dev libelf-dev libpcap-dev
+    apt-get install -q -y apt-transport-https ca-certificates \
+      curl jq git \
+      linux-tools-common linux-tools-generic linux-tools-${KERNEL_VERSION} \
+      build-essential llvm clang \
+      libbpf-dev libelf-dev libpcap-dev
 
 # Install bpftool
 - mode: system
