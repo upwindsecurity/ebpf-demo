@@ -1,3 +1,2 @@
 /.vscode
-/internal/ebpf/*.o
 /demo

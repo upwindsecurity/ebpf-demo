@@ -2,11 +2,15 @@
 
 Demo eBPF Program.
 
-This program uses an eBPF Tracepoint, `sched/sched_process_exec`, to monitor new processes being executed.
+This program uses an eBPF Tracepoint, `sched/sched_process_exec`, to monitor new processes being executed. Events are passed from the kernel to the Go user-space program through a BPF ring buffer, which reads and logs them.
 
 Tracepoints are eBPF programs that attach to pre-defined trace points in the linux kernel. These tracepoints are often placed in locations which are interesting or common locations to measure performance.
 
 ## Requirements
+
+### Kernel
+
+The target Linux kernel must be **>= 5.8** (for the BPF ring buffer) and built with `CONFIG_DEBUG_INFO_BTF=y`. That option exposes `/sys/kernel/btf/vmlinux`, which is required both for CO-RE (Compile Once – Run Everywhere) and for regenerating the vmlinux headers.
 
 ### macOS
 
@@ -32,6 +36,8 @@ Start a virtual machine using Lima and QEMU, and getting a terminal:
 limactl start ./lima/ebpf-demo.yaml
 limactl shell ebpf-demo
 ```
+
+Or use the Make shortcuts, which wrap the commands above: `make lima-start` to bring the VM up and `make lima-shell` to open a shell in it.
 
 * To start the VM using a different architecture add `--arch=<ARCH>` where `<ARCH>` can be one of: `x86_64` or `aarch64`.
 
@@ -75,6 +81,31 @@ limactl shell ebpf-demo
 ## Building
 
 On a linux environment run `make build`.
+
+Since the generated Go bindings and compiled BPF objects are committed to the repo, a plain `go build` also works from a clean clone with only the Go toolchain — no clang or Linux required. The full toolchain is only needed when the BPF C source changes.
+
+## Code generation and headers
+
+* **Go bindings and BPF objects** are produced by [bpf2go](https://github.com/cilium/ebpf), which compiles `bpf/program.bpf.c` into per-arch Go bindings and compiled BPF objects via the `//go:generate` directives in `internal/ebpf/generate_{amd64,arm64}.go`. Run `make generate` on Linux.
+* Both the generated `.go` and `.o` files are **committed to the repo**, so a plain `go build` works from a clean clone. Regeneration is only needed when the BPF C source changes.
+* **libbpf helper headers** are vendored under `bpf/libbpf/`, pinned to `LIBBPF_VERSION` in the `Makefile`, and refreshed with `make update-libbpf-headers`.
+* **vmlinux headers** are generated per-arch with `bpftool btf dump file /sys/kernel/btf/vmlinux format c` (`make vmlinux`) and committed under `bpf/vmlinux/`. The correct arch is selected by `bpf/vmlinux/vmlinux.h`, keyed on the standard `__TARGET_ARCH_x86` / `__TARGET_ARCH_arm64` macros. The source kernel version for each arch is recorded in `bpf/vmlinux/version_<arch>`.
+
+## Make targets
+
+Run `make help` to see all targets. The main ones:
+
+| Target | Description |
+| --- | --- |
+| `make all` | Build everything (vmlinux, libbpf, generate, build) |
+| `make build` | Build the main binary (`./demo`) |
+| `make generate` | Generate Go eBPF bindings and objects |
+| `make vmlinux` | Generate the vmlinux header files |
+| `make update-libbpf-headers` | Refresh the vendored libbpf headers |
+| `make test` | Run tests |
+| `make lint` | Run the linter |
+| `make lima-{start,stop,shell,generate,build}` | Manage and run inside the Lima VM (macOS) |
+| `make docker-{build,run,stop,logs}` | Build and run the app in Docker |
 
 ## Running
 

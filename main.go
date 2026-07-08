@@ -3,9 +3,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -16,8 +14,9 @@ import (
 )
 
 func main() {
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	// Set up signal handling to gracefully shut down on interrupt signals.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer stop()
 
 	// Allow the current process to lock memory for eBPF resources.
 	must(rlimit.RemoveMemlock(), "memlock error")
@@ -25,37 +24,33 @@ func main() {
 	processExec := new(ebpf.ProcessExecTracePoint)
 	must(processExec.Start(), "processExec start")
 	defer func() {
-		err := processExec.Close()
-		if err != nil {
-			fmt.Println("Error closing processExec: ", err)
+		if err := processExec.Close(); err != nil {
+			log.Printf("Error closing processExec: %v", err)
 		}
 	}()
 
-	// Set up waitgroup and context for the reader.
-	wg := sync.WaitGroup{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Set up waitgroup to wait for goroutines to finish.
+	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		must(processExec.Read(ctx), "processExec read")
-	}()
+	// Start a goroutine to read events from the eBPF program.
+	// A read failure cancels the context so main can shut down cleanly;
+	// log.Fatalf is avoided here because it would skip the deferred cleanup.
+	wg.Go(func() {
+		if err := processExec.Read(ctx); err != nil {
+			log.Printf("processExec read: %v", err)
+			stop()
+		}
+	})
 
-	// Wait for a signal to stop the program.
-	// Once the signal is received, cancel the context and wait for the reader to finish.
-	<-stop
+	// Wait for a signal to stop the program, then wait for the reader to finish.
+	<-ctx.Done()
 	log.Println("Received signal, exiting program...")
-	cancel()
+
 	wg.Wait()
 }
 
-func must(err error, msg ...string) {
+func must(err error, msg string) {
 	if err != nil {
-		m := "error"
-		if msg != nil {
-			m = msg[0]
-		}
-		log.Fatalf("%s: %v", m, err)
+		log.Fatalf("%s: %v", msg, err)
 	}
 }
