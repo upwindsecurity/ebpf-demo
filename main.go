@@ -35,14 +35,12 @@ func main() {
 	// Start a goroutine to read events from the eBPF program.
 	// A read failure cancels the context so main can shut down cleanly;
 	// log.Fatalf is avoided here because it would skip the deferred cleanup.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := processExec.Read(ctx); err != nil {
 			log.Printf("processExec read: %v", err)
 			stop()
 		}
-	}()
+	})
 
 	// Wait for a signal to stop the program, then wait for the reader to finish.
 	<-ctx.Done()

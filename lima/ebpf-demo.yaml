@@ -47,7 +47,7 @@ provision:
 - mode: system
   script: |
     #!/bin/sh
-    export GO_VERSION="1.25.12"
+    export GO_VERSION="1.26.4"
     export ARCH=`dpkg --print-architecture`
     export OS=`uname -s | tr '[:upper:]' '[:lower:]'`
     PATH="$PATH:/usr/local/go/bin"

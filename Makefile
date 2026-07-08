@@ -31,7 +31,7 @@ GO ?= $(shell which go || false)
 BPFTOOL ?= $(shell which bpftool || false)
 DOCKER ?= $(shell which docker || false)
 LIMA ?= $(shell which limactl || false)
-GOLANGCI_LINT ?= $(GO) tool golangci-lint
+GOLANGCI_LINT ?= $(GO) tool -modfile tools/tools.mod golangci-lint
 
 # BPF
 BPF_CFLAGS ?= "-g -O2 -Wall -Wextra -Wconversion"

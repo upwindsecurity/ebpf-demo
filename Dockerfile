@@ -14,7 +14,7 @@ RUN apt-get update -y -q && \
         linux-tools-$(uname -r | rev | cut -d- -f2- | rev)-generic \
     && rm -rf /var/lib/apt/lists/*
 ARG BUILDOS BUILDARCH
-ARG GO_VERSION=1.25.12
+ARG GO_VERSION=1.26.4
 ENV PATH=$PATH:/usr/local/go/bin
 RUN curl -sL https://go.dev/dl/go${GO_VERSION}.${BUILDOS}-${BUILDARCH}.tar.gz | tar -v -C /usr/local -xz
 WORKDIR /opt/ebpf-demo
