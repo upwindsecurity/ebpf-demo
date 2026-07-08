@@ -55,14 +55,27 @@ check_ok
 
 echo "Downloading and updating libbpf headers (libbpf v${LIBBPF_VERSION})"
 
-# Fetch libbpf release and extract the desired headers
+# Fetch libbpf release and extract the desired headers.
+# Extract into a temp dir and copy the files flat, since tar's path-rewriting
+# flags differ between GNU (--xform) and BSD (-s) tar.
+tmpdir=$( mktemp -d )
+trap 'rm -rf "$tmpdir"' EXIT
+
 curl -sL "https://github.com/libbpf/libbpf/archive/refs/tags/v${LIBBPF_VERSION}.tar.gz" | \
-    tar -xz -C "${OUTPUTDIR}" --xform='s#.*/##' "${headers[@]}"
+    tar -xz -C "${tmpdir}" "${headers[@]}"
+
+for f in "${headers[@]}"; do
+    cp "${tmpdir}/${f}" "${OUTPUTDIR}/$( basename "${f}" )"
+done
 
 # Update includes to use local paths
-sed -i -e '/<bpf\/bpf_helpers.h>/i #include "vmlinux.h"' "${OUTPUTDIR}/bpf_core_read.h"
-sed -i -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_core_read.h"
-sed -i -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_tracing.h"
+# (sed -i requires a suffix argument on BSD/macOS sed, and the insert command
+# needs the backslash-newline form there; both spellings also work on GNU sed)
+sed -i.bak -e '/<bpf\/bpf_helpers.h>/i\
+#include "vmlinux.h"' "${OUTPUTDIR}/bpf_core_read.h"
+sed -i.bak -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_core_read.h"
+sed -i.bak -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_tracing.h"
+rm -f "${OUTPUTDIR}"/*.bak
 
 # Touch version file
 echo "$LIBBPF_VERSION" > "${OUTPUTDIR}/version"

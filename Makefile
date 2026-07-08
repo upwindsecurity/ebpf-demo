@@ -34,7 +34,7 @@ LIMA ?= $(shell which limactl || false)
 GOLANGCI_LINT ?= $(GO) tool golangci-lint
 
 # BPF
-BPF_CFLAGS ?= "-g -O3 -fpie -Wall -Wextra -Wconversion"
+BPF_CFLAGS ?= "-g -O2 -Wall -Wextra -Wconversion"
 bpf_src := $(shell find bpf -name "*.bpf.c")
 
 # LIBBPF Headers

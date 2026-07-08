@@ -20,18 +20,18 @@ struct process_exec_event {
 	u8 comm[TASK_COMM_LEN];
 	u8 filename[MAX_FILENAME_LEN];
 	int filename_len;
-} __attribute__((packed));
-
-struct sched_process_exec_args {
-	struct common_tracepoint_entry_args_t common;
-
-	__u32 __data_loc_filename;
-	__s8 pid;
-	__s8 old_pid;
 };
 
+// Force emitting struct process_exec_event into the ELF BTF so that
+// bpf2go -type can generate the matching Go type from it. Marked __hidden
+// so the loader skips it and no VariableSpec is generated for it.
+const struct process_exec_event *unused_process_exec_event __hidden;
+
+// Tracepoint handler for sched_process_exec
+// This function will be called when a process is executed
+// The context struct comes from vmlinux.h and matches the kernel's tracepoint layout
 SEC("tracepoint/sched/sched_process_exec")
-int sched_process_exec(struct sched_process_exec_args *ctx)
+int sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
 	struct process_exec_event *e;
 	char unknown[8] = "unknown";
@@ -42,16 +42,16 @@ int sched_process_exec(struct sched_process_exec_args *ctx)
 		return 0;
 	}
 
-	e->pid = LAST_32_BITS(bpf_get_current_pid_tgid());
+	e->pid = (u32)LAST_32_BITS(bpf_get_current_pid_tgid());
 
 	bpf_get_current_comm(e->comm, sizeof(e->comm));
 
 	// The __data_loc_filename field encodes the offset (lower 16 bits)
-    	// where the filename string is stored, relative to the context pointer.
-    	unsigned int offset = ctx->__data_loc_filename & 0xFFFF;
+	// where the filename string is stored, relative to the context pointer.
+	unsigned int offset = ctx->__data_loc_filename & 0xFFFF;
 
 	// Read the filename from the computed address.
-    	// Note: bpf_core_read_str() will read up to sizeof(e->filename) bytes.
+	// Note: bpf_core_read_str() will read up to sizeof(e->filename) bytes.
 	long ret =
 	bpf_core_read_str(e->filename, sizeof(e->filename), (void *)ctx + offset);
 
@@ -66,7 +66,7 @@ int sched_process_exec(struct sched_process_exec_args *ctx)
 
 	// bpf_printk is a helper function that prints a message to the kernel log
 	// This can be useful for debugging, but should be used sparingly
-	// The message will be visible in the kernel trace pipe 
+	// The message will be visible in the kernel trace pipe
 	// (e.g. /sys/kernel/debug/tracing/trace_pipe)
 	bpf_printk("sched_process_exec filename: %s\n", e->filename);
 
