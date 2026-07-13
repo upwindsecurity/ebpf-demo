@@ -8,7 +8,7 @@ SCRIPT=$( cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd )/$( basename "
 SCRIPTPATH=$( dirname "${SCRIPT}" )
 
 # LibBPF headers version to download
-LIBBPF_VERSION=${LIBBPF_VERSION:-1.3.0}
+LIBBPF_VERSION=${LIBBPF_VERSION:-1.7.0}
 
 # The headers we want
 prefix=libbpf-"$LIBBPF_VERSION"
@@ -24,6 +24,16 @@ headers=(
 OUTPUTDIR="${OUTPUTDIR:-"$SCRIPTPATH/../bpf/libbpf"}"
 mkdir -p "${OUTPUTDIR}"
 
+# dest_for maps a tarball path to its destination relative to OUTPUTDIR: the
+# .h headers from src/ go under bpf/ (so sources #include <bpf/...>); anything
+# else (the LICENSE) lands flat at the root.
+function dest_for() {
+    case "$1" in
+        "$prefix"/src/*.h) echo "bpf/$( basename "$1" )" ;;
+        *) basename "$1" ;;
+    esac
+}
+
 # Check if we already have the current version and all files exist
 function check_ok() {
     if [[ -f "$OUTPUTDIR/version" ]]; then
@@ -36,9 +46,7 @@ function check_ok() {
         fi
 
         for f in "${headers[@]}"; do
-            file="${f/$prefix\/src\/}"
-            file="${file/$prefix\//}"
-            if [[ ! -f "$OUTPUTDIR/$file" ]]; then
+            if [[ ! -f "$OUTPUTDIR/$( dest_for "$f" )" ]]; then
                 files_ok=false
                 break
             fi
@@ -65,17 +73,14 @@ curl -sL "https://github.com/libbpf/libbpf/archive/refs/tags/v${LIBBPF_VERSION}.
     tar -xz -C "${tmpdir}" "${headers[@]}"
 
 for f in "${headers[@]}"; do
-    cp "${tmpdir}/${f}" "${OUTPUTDIR}/$( basename "${f}" )"
+    dest="${OUTPUTDIR}/$( dest_for "${f}" )"
+    mkdir -p "$( dirname "${dest}" )"
+    cp "${tmpdir}/${f}" "${dest}"
 done
 
-# Update includes to use local paths
-# (sed -i requires a suffix argument on BSD/macOS sed, and the insert command
-# needs the backslash-newline form there; both spellings also work on GNU sed)
-sed -i.bak -e '/<bpf\/bpf_helpers.h>/i\
-#include "vmlinux.h"' "${OUTPUTDIR}/bpf_core_read.h"
-sed -i.bak -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_core_read.h"
-sed -i.bak -e 's#<bpf/bpf_helpers.h>#"bpf_helpers.h"#' "${OUTPUTDIR}/bpf_tracing.h"
-rm -f "${OUTPUTDIR}"/*.bak
+# The headers are vendored verbatim: with the .h files under bpf/ and
+# -I<libbpf_dir> on the compile line, libbpf's own #include <bpf/...> lines
+# resolve as-is, so no include rewriting is needed.
 
 # Touch version file
 echo "$LIBBPF_VERSION" > "${OUTPUTDIR}/version"
