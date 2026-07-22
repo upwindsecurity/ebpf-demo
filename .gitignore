@@ -1,2 +1,5 @@
 /.vscode
 /demo
+
+# `go build` binary
+/ebpf-demo
