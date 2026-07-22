@@ -1,0 +1,17 @@
+# clangd configuration for the eBPF C sources.
+#
+# Parse as the bpf (ELF) target with the vendored vmlinux/libbpf headers — the
+# same -I/-D flags bpf2go compiles with — so libbpf's CO-RE macros resolve.
+# Paths are relative to this bpf/ directory.
+#
+# On an amd64 host, change __TARGET_ARCH_arm64 to __TARGET_ARCH_x86 so that
+# vmlinux.h selects the matching BTF dump.
+CompileFlags:
+  Add:
+    - -xc
+    - --target=bpf
+    - -std=gnu17
+    - -D__TARGET_ARCH_arm64
+    - -I.
+    - -Ivmlinux
+    - -Ilibbpf

@@ -1,6 +1,6 @@
 #include "vmlinux.h"
-#include "bpf_helpers.h"
-#include "bpf_core_read.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_core_read.h>
 
 // Include common definitions and helpers
 #include "common.bpf.h"

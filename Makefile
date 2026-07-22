@@ -41,9 +41,9 @@ bpf_src := $(shell find bpf -name "*.bpf.c")
 LIBBPF_VERSION = 1.7.0
 libbpf_dir = bpf/libbpf
 libbpf_headers := $(libbpf_dir)/LICENSE.BSD-2-Clause
-libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf_core_read.h $(libbpf_dir)/bpf_endian.h
-libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf_helper_defs.h $(libbpf_dir)/bpf_helpers.h
-libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf_tracing.h
+libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf/bpf_core_read.h $(libbpf_dir)/bpf/bpf_endian.h
+libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf/bpf_helper_defs.h $(libbpf_dir)/bpf/bpf_helpers.h
+libbpf_headers := $(libbpf_headers) $(libbpf_dir)/bpf/bpf_tracing.h
 
 # VMLinux
 vmlinux_dir := bpf/vmlinux
@@ -75,10 +75,10 @@ help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
 	@echo 'Targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: all
-all: prereq vmlinux libbpf generate build ## Build everything
+all: vmlinux libbpf generate build ## Build everything
 
 .PHONY: build
 build: $(TARGET) ## Build the main target
@@ -112,18 +112,29 @@ libbpf: $(libbpf_headers)
 $(libbpf_headers):
 	@LIBBPF_VERSION=$(LIBBPF_VERSION) scripts/update-libbpf-headers.sh
 
+# vmlinux re-dumps only when it has to: the recipe compares the running kernel
+# (uname -r) against the recorded version_<arch> and dumps just on a mismatch or
+# a missing header. macOS can't dump (and has no Linux kernel to compare), so
+# there it only checks the committed dump exists.
 .PHONY: vmlinux
-vmlinux: $(vmlinux) ## Generate vmlinux header files
-
-$(vmlinux):
-ifeq ($(OS),Darwin)
-	$(error "Can not build on MacOs. Run on Linux\nFor example, use Docker or Lima VM")
-endif
+vmlinux: ## Dump vmlinux.h for the host arch (only when the running kernel differs)
+ifeq ($(OS),darwin)
+	@test -f $(vmlinux) || { echo "error: $(vmlinux) missing; dump it from Linux, e.g. 'make lima-vmlinuxh-$(ARCH)'"; exit 1; }
+	@echo "vmlinux.h ($(ARCH)): can't refresh on macOS; keeping committed dump"
+else
 ifeq (, $(BPFTOOL))
 	$(error "No bpftool in $$PATH, make sure it is installed.")
 endif
-	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
-	uname -r > $(vmlinux_dir)/version_$(ARCH)
+	@current=$$(uname -r); \
+	recorded=$$(cat $(vmlinux_dir)/version_$(ARCH) 2>/dev/null || true); \
+	if [ -f "$(vmlinux)" ] && [ "$$current" = "$$recorded" ]; then \
+		echo "vmlinux.h ($(ARCH)): up to date ($$current)"; \
+	else \
+		echo "vmlinux.h ($(ARCH)): dumping $${recorded:-none} -> $$current"; \
+		$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $(vmlinux) && \
+		echo "$$current" > $(vmlinux_dir)/version_$(ARCH); \
+	fi
+endif
 
 $(TARGET): $(go_src) $(generated_files)
 	$(go_env) go build $(go_ldflags) -o $(TARGET) .
@@ -169,19 +180,28 @@ ifeq (, $(LIMA))
 	$(error "limactl not found in $$PATH")
 endif
 
-VM_NAME ?= ebpf-demo
+# VM instances are named by architecture so it is always clear which arch a VM
+# and its targets operate on. The canonical VM (used by the arch-agnostic
+# generate/build targets, which cross-compile every arch from one guest)
+# defaults to the host arch; the amd64 dump on an arm64 host is emulated.
+VM_NAME ?= ebpf-demo-$(ARCH)
+lima_config := tools/lima/ebpf-demo.yaml
 lima_env := LIMA_INSTANCE=$(VM_NAME)
+# Empty unless a per-arch vmlinuxh target pins a non-native guest architecture.
+LIMA_ARCH ?=
 
 .PHONY: lima-start lima-stop lima-shell lima-generate lima-build lima-remove
-lima-start: lima-prereq lima/ebpf-demo.yaml
-	@if [ -z "$$(limactl list | grep $(VM_NAME))" ]; then \
-			limactl start --name=$(VM_NAME) --tty=false ./lima/ebpf-demo.yaml; \
+.PHONY: lima-vmlinuxh lima-vmlinuxh-amd64 lima-vmlinuxh-arm64 lima-vmlinuxh-all
+# LIMA_ARCH pins a non-native guest architecture (emulated via qemu). The
+# ebpf-demo config lists both the amd64 and arm64 images, so --arch selects
+# which one boots; unset means Lima picks the host arch.
+lima-start: lima-prereq $(lima_config)
+	@if ! limactl list -q 2>/dev/null | grep -qx '$(VM_NAME)'; then \
+		limactl start --name=$(VM_NAME) --tty=false $(if $(LIMA_ARCH),--arch=$(LIMA_ARCH)) $(lima_config); \
+	elif [ "$$(limactl list $(VM_NAME) --format '{{.Status}}')" != "Running" ]; then \
+		limactl start $(VM_NAME); \
 	else \
-		if [ -z "$$(limactl list | grep Running)" ]; then \
-			limactl start $(VM_NAME); \
-		else \
-			echo "VM $(VM_NAME) already running"; \
-		fi; \
+		echo "VM $(VM_NAME) already running"; \
 	fi
 
 lima-stop: lima-prereq
@@ -196,8 +216,22 @@ lima-shell: lima-prereq lima-start
 lima-generate: lima-prereq lima-start
 	@$(lima_env) lima make generate
 
+# vmlinux.h is dumped from the guest's running kernel, so each arch's dump must
+# come from a guest of that arch. The per-arch targets below invoke this worker
+# with a matching VM_NAME/LIMA_ARCH; it is not meant to be called directly.
 lima-vmlinuxh: lima-prereq lima-start
 	@$(lima_env) lima make vmlinux
+
+lima-vmlinuxh-amd64: lima-prereq ## Dump vmlinux.h for amd64 (emulated on arm64 hosts)
+	@$(MAKE) lima-vmlinuxh VM_NAME=ebpf-demo-amd64 LIMA_ARCH=x86_64
+
+lima-vmlinuxh-arm64: lima-prereq ## Dump vmlinux.h for arm64 (emulated on amd64 hosts)
+	@$(MAKE) lima-vmlinuxh VM_NAME=ebpf-demo-arm64 LIMA_ARCH=aarch64
+
+# The two dumps use separate VMs and separate arch images, so they are fully
+# independent; -j2 runs them concurrently regardless of the outer make's flags.
+lima-vmlinuxh-all: lima-prereq ## Dump vmlinux.h for both arches (in parallel)
+	@$(MAKE) -j2 lima-vmlinuxh-amd64 lima-vmlinuxh-arm64
 
 lima-build: lima-prereq lima-start
 	@$(lima_env) lima make

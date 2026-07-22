@@ -1,0 +1,5 @@
+# Generated vmlinux headers (regenerated from kernel BTF, see Makefile)
+bpf/vmlinux/*.h linguist-generated=true
+
+# Vendored libbpf headers — exclude from language stats, keep normal diffs
+bpf/libbpf/** linguist-vendored=true
